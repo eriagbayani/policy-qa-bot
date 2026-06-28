@@ -1,0 +1,34 @@
+# Environment variables — never commit
+.env
+
+# Documents — company sensitive
+docs/
+
+# Virtual environment
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+
+# ChromaDB local storage
+chroma_db/
+
+# uv
+.uv
+uv.lock
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode
+.idea
+*.swp
+
+# Logs
+*.log
+
+# Temp files
+*.tmp
