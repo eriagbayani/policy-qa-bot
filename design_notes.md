@@ -1,0 +1,185 @@
+# Design Notes — Policy Q&A Bot
+
+## Overview
+
+This document explains the key technical decisions made in building the Policy Q&A Bot — a RAG-based assistant for insurance policy document question answering with mandatory clause-level citations.
+
+---
+
+## 1. Chunking Strategy
+
+### Why Section-Aware Chunking Over Standard Chunking
+
+Standard character or token-based chunking (e.g. `RecursiveCharacterTextSplitter`) splits text at arbitrary boundaries — it has no understanding of document structure. For insurance policy documents this is a significant problem because:
+
+- A clause split across two chunks loses its meaning
+- A citation pointing to "§3.2" becomes meaningless if the chunk doesn't contain the heading
+- Retrieval quality drops when context is fragmented mid-sentence
+
+**Section-aware chunking solves this by:**
+
+- Detecting section headings using regex patterns before splitting
+- Flushing the current chunk at heading boundaries — not mid-clause
+- Attaching rich metadata per chunk: `doc_name`, `section`, `clause_number`, `page`, `heading_path`
+- Preserving heading hierarchy — so a chunk from "3.2 Exclusions" knows it belongs under "3. General Conditions"
+
+### Heading Detection Patterns
+
+The chunker detects headings using a set of regex patterns covering common insurance document structures:
+
+```
+SECTION A, SECTION 1       → ^SECTION\s+[A-Z0-9]+
+PART 1, PART A             → ^PART\s+[A-Z0-9]+
+1. DEFINITIONS             → ^\d+\.\s+[A-Z]
+1.1 General                → ^\d+\.\d+\s+[A-Z]
+1.1.1 Specific             → ^\d+\.\d+\.\d+\s+
+ALL CAPS HEADINGS          → ^[A-Z][A-Z\s]{4,}$
+Schedule 1, Endorsement 1  → ^Schedule\s+\d+, ^Endorsement\s+\d+
+```
+
+### Chunk Size Decision
+
+Target: **600 tokens** with **100 token overlap**
+
+- 400 tokens minimum: too small — splits clauses mid-sentence
+- 800 tokens maximum: too large — retrieval becomes less precise
+- 600 tokens: balances completeness of clause content with retrieval precision
+- 100 token overlap: prevents important information from being lost at chunk boundaries
+
+### Known Limitations
+
+- Cross-references ("see Section 3.2") are not explicitly extracted into metadata — they remain in chunk text and are retrievable but not structured
+- Some PDF documents use non-standard formatting — headings may not be detected if they use unusual spacing or fonts
+- Scanned PDFs or image-based PDFs will not extract text correctly — requires OCR preprocessing
+
+---
+
+## 2. Metadata Design
+
+Each chunk carries the following metadata:
+
+```python
+{
+    "doc_name": "QBE_Policy.pdf",        # Source filename
+    "section": "3.2 General Exclusions", # Detected heading text
+    "clause_number": "3.2",              # Extracted clause number
+    "heading_path": "3. Conditions > 3.2 Exclusions",  # Full hierarchy
+    "page": 12                           # PDF page number
+}
+```
+
+This metadata enables precise citations in the format:
+```
+QBE_Policy.pdf §3.2 (General Exclusions), p.12
+```
+
+---
+
+## 3. Retrieval Strategy
+
+### Vector Store
+
+ChromaDB was chosen over FAISS for the following reasons:
+
+- In-process, no server required — appropriate for this scope
+- Supports metadata filtering for future enhancements
+- Returns similarity scores alongside documents — enables relevance thresholding
+- Simple API consistent with LangChain ecosystem
+
+### Relevance Threshold
+
+A minimum similarity score of **0.1** is used to determine whether a retrieved chunk is relevant enough to include in the answer.
+
+- Chunks below this threshold are retrieved but flagged as irrelevant
+- If no chunks meet the threshold, the system returns the "cannot find" response
+- The closest chunk is still cited as a reference point even in "cannot find" responses
+
+### Top-K Retrieval
+
+**k=8** chunks are retrieved per query — higher than the typical k=4 default because:
+
+- Insurance policy questions often span multiple sections
+- Water damage, for example, appears in exclusions, conditions, and coverage sections simultaneously
+- More context gives the LLM better grounding for complex multi-clause questions
+
+---
+
+## 4. Prompt Design
+
+### System Prompt Philosophy
+
+The system prompt is designed around three principles:
+
+**Strict grounding** — The LLM is explicitly instructed to answer only from provided context and never use outside knowledge. This prevents hallucination of policy terms that don't exist in the document.
+
+**Definitive language** — When the context contains explicit exclusion or inclusion language, the LLM is instructed to state it definitively — not hedge with "might" or "suggests." Insurance answers need to be precise.
+
+**Structured citations** — The LLM is given an exact citation format and instructed never to include raw chunk headers in the output. This keeps citations clean and consistent.
+
+### Citation Format
+
+```
+Sources: filename.pdf §clause_number (Section Name), p.page_number
+```
+
+Citations are both:
+- Generated by the LLM from context it receives
+- Appended programmatically if not present — ensuring citations always appear
+
+### Temperature Setting
+
+Temperature is set to **0.1** — near-deterministic. Policy Q&A is a factual task where consistency and accuracy matter more than creativity. Lower temperature reduces the risk of the LLM paraphrasing policy language in a way that changes its meaning.
+
+---
+
+## 5. Negative Question Handling
+
+### "I Cannot Find" Behaviour
+
+The system handles out-of-scope and near-miss questions through two mechanisms:
+
+**Relevance threshold** — if retrieved chunks score below 0.1 similarity, the system bypasses the LLM entirely and returns the standard "cannot find" response programmatically. This avoids wasting LLM calls on clearly irrelevant queries.
+
+**LLM-level instruction** — for borderline cases where chunks are retrieved but the answer isn't definitively there, the LLM is instructed to:
+1. State it cannot find a definitive answer
+2. Explain what related information was found
+3. Reference the closest related clauses
+
+### Three Query Categories
+
+| Category | Behaviour |
+|---|---|
+| In-domain | Definitive answer with clause citations |
+| Near-miss | "Cannot find definitive answer" + closest related clauses |
+| Out-of-scope | "Cannot find" + no related clauses found |
+
+---
+
+## 6. Pluggable LLM Backend
+
+The system is designed so the LLM backend is swappable with a single configuration change:
+
+```python
+# .env
+LLM_BACKEND=mock    # No external API — works offline
+LLM_BACKEND=groq    # Groq API — production quality answers
+```
+
+Both backends implement the same interface:
+```python
+def generate(self, question: str, context: str, citations: str) -> str
+```
+
+Adding a new backend (OpenAI, Anthropic, local Ollama) requires only implementing this interface and adding the option to the factory function in `chain.py`.
+
+---
+
+## 7. Known Limitations and Future Improvements
+
+| Limitation | Proposed Fix |
+|---|---|
+| Cross-references not structured in metadata | Extract "see Section X.X" patterns during chunking and store as `cross_refs` metadata field |
+| Some PDF heading detection misses non-standard formatting | Add font-size based heading detection using pdfplumber instead of pypdf |
+| No persistent vector store | Add `persist_directory` to ChromaDB for production deployments |
+| Single file type tested (PDF) | DOCX support is coded but requires additional testing |
+| Rate limiting on Groq free tier | Add exponential backoff retry logic or switch to a local model for high-volume use |s
