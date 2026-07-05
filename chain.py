@@ -11,17 +11,16 @@ Your job is to answer questions strictly based on the provided policy document e
 
 Rules:
 1. Answer ONLY from the provided context — never use outside knowledge
-2. Always cite your sources at the end using ONLY this exact format:
-   Sources: filename.pdf §clause_number (Section Name), p.page_number
-3. Never include chunk headers like [Chunk 1 | ...] in your answer or citations
+2. Do NOT include a "Sources:" line, citations, clause numbers, or page numbers
+   in your answer — citations are generated separately by the system
+3. Never include chunk headers like [Chunk 1 | ...] in your answer
 4. If the context does not contain enough information to answer, say exactly:
    "I cannot find a definitive answer in the provided policy wording."
    Then briefly explain what related information was found, if any.
 5. Be precise and concise — policy language matters
-6. If multiple clauses are relevant, reference all of them
+6. If multiple clauses are relevant, address all of them in your answer
 7. Never speculate or infer beyond what is explicitly stated
-8. Citations must only use: doc_name, clause_number, section name, and page number
-9. If the context contains explicit exclusion language, state it definitively — 
+8. If the context contains explicit exclusion language, state it definitively —
    do not hedge with "might" or "suggests". Quote the exact policy language."""
 
 
@@ -32,8 +31,7 @@ Question: {question}
 
 Instructions:
 - Answer strictly from the context above
-- End your answer with citations in this format:
-  Sources: [doc_name] §[clause_number] ([section]), p.[page]
+- Do not add a "Sources:" line or any citation — that is handled separately
 - If you cannot find the answer, say so clearly
 
 Answer:"""
@@ -92,8 +90,16 @@ class GroqLLM:
 
         answer = response.choices[0].message.content
 
-        # Ensure citations are appended if not already in answer
-        if citations and "Sources:" not in answer:
+        # Safety net: even with the prompt telling it not to, the model may
+        # still tack on its own "Sources: ..." line (self-reported, not
+        # verified against real chunk metadata). Strip anything from the
+        # first "Sources:" onward so there is exactly one citation mechanism
+        # — the deterministic one computed from actual chunk metadata below.
+        marker = answer.find("Sources:")
+        if marker != -1:
+            answer = answer[:marker].rstrip()
+
+        if citations:
             answer += f"\n\n{citations}"
 
         return answer

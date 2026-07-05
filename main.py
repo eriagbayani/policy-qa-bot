@@ -2,18 +2,32 @@ import sys
 from ingestion import ingest_documents
 from retriever import PolicyRetriever
 from chain import PolicyQAChain
+import logging
+from logger.logging import setup_logging
+
+logger = logging.getLogger(__name__)
 
 # ── DISPLAY ────────────────────────────────────────────
 def print_result(result: dict):
-    print("\n" + "=" * 60)
-    print(f"Question: {result['question']}")
-    print("-" * 60)
-    print(f"Answer:\n{result['answer']}")
-    print("-" * 60)
-    print(f"Backend: {result['backend']}")
-    print(f"Chunks retrieved: {result['chunks_retrieved']} "
-          f"({result['relevant_chunks']} relevant)")
-    print("=" * 60)
+    logger.info(
+    "\n%s\n"
+    "Question: %s\n"
+    "%s\n"
+    "Answer:\n%s\n"
+    "%s\n"
+    "Backend: %s\n"
+    "Chunks retrieved: %d (%d relevant)\n"
+    "%s",
+    "=" * 60,
+    result["question"],
+    "-" * 60,
+    result["answer"],
+    "-" * 60,
+    result["backend"],
+    result["chunks_retrieved"],
+    result["relevant_chunks"],
+    "=" * 60,
+)
 
 # Demo mode, this has default questions already for testing.
 def run_demo(chain: PolicyQAChain):
@@ -25,10 +39,15 @@ def run_demo(chain: PolicyQAChain):
         "What are the general exclusions?",
     ]
 
-    print("\n" + "=" * 60)
-    print("POLICY Q&A BOT — DEMO MODE")
-    print(f"Running {len(demo_questions)} demo questions...")
-    print("=" * 60)
+    logger.info(
+    "\n%s\n"
+    "POLICY Q&A BOT — DEMO MODE\n"
+    "Running %d demo questions...\n"
+    "%s",
+    "=" * 60,
+    len(demo_questions),
+    "=" * 60,
+)
 
     for question in demo_questions:
         result = chain.answer(question)
@@ -36,20 +55,25 @@ def run_demo(chain: PolicyQAChain):
 
 # interactive mode
 def run_interactive(chain: PolicyQAChain):
-    print("\n" + "=" * 60)
-    print("POLICY Q&A BOT — INTERACTIVE MODE")
-    print("Type your question and press Enter.")
-    print("Type 'exit' to quit.")
-    print("=" * 60)
+
+    logger.info(
+    "\n%s\n"
+    "POLICY Q&A BOT — INTERACTIVE MODE\n"
+    "Type your question and press Enter.\n"
+    "Type 'exit' to quit.\n"
+    "%s",
+    "=" * 60,
+    "=" * 60,
+)
 
     while True:
-        print()
-        question = input("Question: ").strip()
+        question = input("\nQuestion: ").strip()
 
         if not question:
             continue
+
         if question.lower() == "exit":
-            print("Goodbye.")
+            logger.info("Goodbye.")
             break
 
         result = chain.answer(question)
@@ -57,20 +81,23 @@ def run_interactive(chain: PolicyQAChain):
 
 # main func
 def main():
-    print("=" * 60)
-    print("POLICY Q&A BOT")
-    print("=" * 60)
+    setup_logging()
+    logger.info(
+    "\n%s\n"
+    "POLICY Q&A BOT\n"
+    "%s",
+    "=" * 60,
+    "=" * 60,
+)
 
-    # Step 1 — Ingest documents
-    print("\nStep 1: Ingesting policy documents...")
+    logger.info("Step 1: Ingesting policy documents...")
     vectorstore = ingest_documents()
 
-    # Step 2 — Initialize retriever and chain
-    print("\nStep 2: Initializing retriever and QA chain...")
+    logger.info("Step 2: Initializing retriever and QA chain...")
     retriever = PolicyRetriever(vectorstore=vectorstore)
     chain = PolicyQAChain(retriever=retriever)
 
-    print("\nSystem ready.")
+    logger.info("System ready.")
 
     # Step 3 — Choose mode
     mode = "interactive"

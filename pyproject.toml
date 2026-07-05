@@ -1,19 +1,39 @@
 [project]
-name = "policy-qna-bot"
-version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
+name = "policy-qa-bot"
+version = "1.0.0"
+description = "RAG-powered Q&A over insurance policy documents, with clause-level citations."
 requires-python = ">=3.13"
 dependencies = [
-    "chromadb>=1.5.9",
-    "groq>=1.5.0",
-    "langchain>=1.3.11",
-    "langchain-chroma>=1.1.0",
-    "langchain-community>=0.4.2",
-    "langchain-huggingface>=1.2.2",
-    "pypdf>=6.14.2",
-    "python-docx>=1.2.0",
-    "python-dotenv>=1.2.2",
-    "sentence-transformers>=5.6.0",
-    "tiktoken>=0.13.0",
+    "fastapi==0.139.0",
+    "uvicorn[standard]==0.49.0",
+    "slowapi==0.1.10",
+    "pydantic==2.13.4",
+    "langchain-core==1.4.8",
+    "langchain-chroma==1.1.0",
+    "langchain-huggingface==1.2.2",
+    "chromadb==1.5.9",
+    "sentence-transformers==5.6.0",
+    "groq==1.5.0",
+    "tiktoken==0.13.0",
+    "pypdf==5.9.0",
+    "python-dotenv==1.2.2",
+    "torch",
+    "rank-bm25",
 ]
+
+[dependency-groups]
+dev = [
+    "httpx",
+    "pytest",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

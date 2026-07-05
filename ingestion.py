@@ -13,7 +13,15 @@ from config import (
     CHUNK_SIZE_TOKENS,
     CHUNK_OVERLAP_TOKENS,
     HEADING_PATTERNS,
+    NUMBERED_HEADING_PATTERNS,
+    MAX_HEADING_WORDS,
+    MAX_HEADING_WORDS_WITH_PERIOD,
+    CHROMA_PERSIST_DIR,
 )
+import logging
+from logger.logging import setup_logging
+
+logger = logging.getLogger(__name__)
 
 # tokenizer
 tokenizer = tiktoken.get_encoding("cl100k_base")
@@ -28,6 +36,17 @@ def is_heading(line: str) -> bool:
         return False
     for pattern in HEADING_PATTERNS:
         if re.match(pattern, line):
+            if pattern in NUMBERED_HEADING_PATTERNS:
+                # Numbered patterns over-match ordinary clause sentences
+                # like "9. We will not cover property not owned by your
+                # business." — real headings are short and title-like, so
+                # reject long or sentence-shaped matches even if the regex
+                # technically matched.
+                word_count = len(line.split())
+                if word_count > MAX_HEADING_WORDS:
+                    continue
+                if line.endswith(".") and word_count > MAX_HEADING_WORDS_WITH_PERIOD:
+                    continue
             return True
     return False
 
@@ -156,11 +175,45 @@ def ingest_documents() -> Chroma:
     vectorstore = Chroma.from_documents(
         documents=all_chunks,
         embedding=embeddings,
-        collection_name=CHROMA_COLLECTION
+        collection_name=CHROMA_COLLECTION,
+        persist_directory=CHROMA_PERSIST_DIR,
+        # NOTE: the older collection_metadata={"hnsw:space": "cosine"} key is
+        # silently ignored by this chromadb/langchain_chroma version — it
+        # now reads collection.configuration.hnsw.space, not
+        # collection.metadata["hnsw:space"]. Without this, both the real
+        # HNSW index AND langchain's relevance-score formula default to raw
+        # L2 distance, which is why NO_ANSWER_THRESHOLD comparisons were
+        # meaningless even after setting collection_metadata.
+        collection_configuration={"hnsw": {"space": "cosine"}},
     )
 
     print("Ingestion complete.")
     return vectorstore
+
+
+def load_existing_vectorstore() -> Chroma | None:
+    """
+    Load a previously persisted ChromaDB collection from disk without
+    re-embedding anything. Returns None if no persisted data exists yet
+    for this collection, so the caller knows it needs to run ingestion.
+    """
+    if not Path(CHROMA_PERSIST_DIR).exists():
+        return None
+
+    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+    vectorstore = Chroma(
+        collection_name=CHROMA_COLLECTION,
+        embedding_function=embeddings,
+        persist_directory=CHROMA_PERSIST_DIR,
+    )
+
+    # Chroma will happily "load" an empty/never-populated collection.
+    # Treat an empty collection the same as "nothing persisted yet".
+    if vectorstore._collection.count() == 0:
+        return None
+
+    return vectorstore
+
 
 if __name__ == "__main__":
     ingest_documents()
